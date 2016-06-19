@@ -3,19 +3,18 @@
 from select import select
 from socket import socket, AF_INET, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, SO_BROADCAST
 import sys
-from time import sleep
 
 import netifaces
 
-LAN_SUBNET = "192.168."
+LAN_SUBNET = '192.168.'
 SERVICE_PORT = 6983
 BUFFER_SIZE = 4096
 
-def get_lan_address():
+def get_lan_address(subnet):
 	for intf in netifaces.interfaces():
 		for binding in netifaces.ifaddresses(intf).get(netifaces.AF_INET, []):
 			addr = binding['addr']
-			if addr.startswith(LAN_SUBNET):
+			if addr.startswith(subnet):
 				return addr
 
 def setup_socket(address, port):
@@ -26,22 +25,33 @@ def setup_socket(address, port):
 	return s
 
 class DatagramClient(object):
-	def __init__(self):
-		self.address = get_lan_address()
-		self.port = SERVICE_PORT
+	def __init__(self, subnet, port):
+		self.address = get_lan_address(subnet)
+		self.port = port
 		self.recv_socket = setup_socket('', self.port)
 		self.send_socket = setup_socket(self.address, self.port)
 
 	def send_message(self, text):
-		data = bytes(text, "utf8")
+		data = bytes(text, 'utf8')
 		self.send_socket.sendto(data, ('<broadcast>', self.port))
 
 	def receive_message(self):
-		message = self.recv_socket.recvfrom(BUFFER_SIZE)
-		if message and message[1][0] != self.address:
-			return (str(message[0], "utf8"), message[1])
+		message = self.Message(self.recv_socket.recvfrom(BUFFER_SIZE))
+		if message.address not in (None, self.address):
+			return message
 		else:
 			return None
+
+	class Message(object):
+		def __init__(self, tupl):
+			if tupl:
+				self.address = tupl[1][0]
+				self.port = tupl[1][1]
+				self.text = str(tupl[0], 'utf8')
+			else:
+				self.address = None
+				self.port = None
+				self.text = None
 
 def loop(client):
 	ready,w,x = select([client.recv_socket, sys.stdin], [], [])
@@ -49,14 +59,14 @@ def loop(client):
 		if client.recv_socket in ready:
 			incoming = client.receive_message()
 			if incoming:
-				print('{}: {}'.format(incoming[1][0], incoming[0].rstrip()))
+				print('{}: {}'.format(incoming.address, incoming.text.rstrip()))
 		if sys.stdin in ready:
 			outgoing = sys.stdin.readline()
 			if outgoing:
 				client.send_message(outgoing)
 
 def main(args):
-	client = DatagramClient()
+	client = DatagramClient(LAN_SUBNET, SERVICE_PORT)
 	print('bound to {}:{}'.format(client.address, client.port))
 	while True:
 		loop(client)
